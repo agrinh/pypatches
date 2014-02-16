@@ -8,7 +8,7 @@ import sklearn.decomposition
 
 class Patches(object):
 
-    def __init__(self, images, patch_shape, scale_factor = 1, alternatives = 1):
+    def __init__(self, images, patch_shape, scale_factor=1, alternatives=1):
         self.__patch_shape = patch_shape
         self.__alternatives = alternatives
         real_shape = (patch_shape[0] * scale_factor, patch_shape[1] * scale_factor)
@@ -16,7 +16,9 @@ class Patches(object):
         max_components = int(0.1 * numpy.prod(patch_shape))
         self.__pca = sklearn.decomposition.PCA(n_components=max_components)
         images = [ self.crop(image, patch_shape) for image in images ]
-        data = self.__initialize_data(images, patch_shape)
+        data, mean, std = self.__initialize_data(images, patch_shape)
+        self.__mean = mean
+        self.__std = std
         self.__pca.fit(data)
         self.__kd_tree = scipy.spatial.cKDTree(self.project(data))
 
@@ -25,7 +27,10 @@ class Patches(object):
         size = numpy.prod(patch_shape)
         reshaped = (image.reshape((1, size)) for image in images)
         M = numpy.vstack(reshaped)
-        return M
+        mean = M.mean(0)
+        std = M.std(0)
+        M = (M - mean) / std  # normalize
+        return M, mean, std
 
     @staticmethod
     def crop(image, new_shape):
@@ -51,13 +56,17 @@ class Patches(object):
         bottom = vertical_padding + new_shape[0]
         return image[top:bottom, left:right]
 
+    def normalize(self, data):
+        return (data - self.__mean) / self.__std
+
     def project(self, data):
         return self.__pca.transform(data)
 
     def replace(self, patch):
-        data = self.project(patch.reshape((1, patch.size)))
+        normalized = self.normalize(patch.reshape((1, patch.size)))
+        point = self.project(normalized)
         alternatives = self.__alternatives
-        dist, indexes = self.__kd_tree.query(data, k=alternatives)
+        dist, indexes = self.__kd_tree.query(point, k=alternatives)
         index = numpy.random.choice(indexes.flatten())
         return self.__images[index]
 
