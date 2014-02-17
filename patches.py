@@ -9,16 +9,18 @@ import scipy.spatial
 import sklearn.decomposition
 
 
+# TODO(Agrin): Cleanup
 class Patches(object):
 
     def __init__(self, images, patch_shape, scale_factor=1, alternatives=1,
-                 colorspace='rgb'):
+                 colorspace='rgb', debug=False):
         if colorspace not in ('rgb', 'hsv'):
             raise ValueError('Only supported colorspaces are rgb and hsv')
         # store parameters
-        self.__patch_shape = patch_shape
         self.__alternatives = alternatives
         self.__colorspace = colorspace
+        self.__debug = debug
+        self.__patch_shape = patch_shape
         real_shape = (patch_shape[0] * scale_factor,
                       patch_shape[1] * scale_factor)
         self.__images = [self.crop(image, real_shape) for image in images]
@@ -30,8 +32,13 @@ class Patches(object):
         self.__selected = selected
         # prepare for comparisons
         max_components = int(0.1 * numpy.prod(patch_shape))
+        if self.__debug:  # 3 components allows for 3d plotting
+            max_components = 3
         self.__pca = sklearn.decomposition.PCA(n_components=max_components)
         self.__pca.fit(data)
+        if debug:
+            # save projected data for debugging
+            self.__debug_data = self.__pca.transform(data)
         self.__kd_tree = scipy.spatial.cKDTree(self.project(data))
 
     @classmethod
@@ -89,16 +96,26 @@ class Patches(object):
     def project(self, data):
         return self.__pca.transform(data)
 
-    def replace(self, patch):
-        # stretch into row vector and select
+    def prepare(self, patch):
         patch = self.preprocess(patch)
         data = patch.reshape((1, patch.size))[:, self.__selected].squeeze()
         normalized = self.normalize(data)
-        point = self.project(normalized)
+        return self.project(normalized)
+
+    def replace(self, patch):
+        # stretch into row vector and select
+        point = self.prepare(patch)
         alternatives = self.__alternatives
         dist, indexes = self.__kd_tree.query(point, k=alternatives)
         index = numpy.random.choice(indexes.flatten())
         return self.__images[index]
+
+    @staticmethod
+    def __plot_3d_data(axis, data, color='b'):
+        xs = data[:, 0]
+        ys = data[:, 1]
+        zs = data[:, 2]
+        axis.scatter(xs, ys, zs, c=color)
 
     def represent(self, image):
         shape = list(image.shape)
@@ -109,10 +126,24 @@ class Patches(object):
         image = self.crop(image, shape)
         vsplits = numpy.vsplit(image, msplits)
         hsplits = (numpy.hsplit(vsplit, nsplits) for vsplit in vsplits)
-        hsplits = (map(self.replace, hsplit) for hsplit in hsplits)
-        vsplits = map(numpy.hstack, hsplits)
-        new_image = numpy.vstack(vsplits)
-        return new_image
+        if self.__debug:
+            import mpl_toolkits.mplot3d
+            import matplotlib.pyplot
+            # data for patches
+            patch_vsplits = (numpy.vstack(itertools.imap(self.prepare, hsplit))
+                             for hsplit in hsplits)
+            patch_data = numpy.vstack(patch_vsplits)
+            figure = matplotlib.pyplot.figure()
+            axis = figure.add_subplot(111, projection='3d')
+            self.__plot_3d_data(axis, self.__debug_data, color='b')
+            self.__plot_3d_data(axis, patch_data, color='r')
+            matplotlib.pyplot.show()
+        else:
+            hsplits = (itertools.imap(self.replace, hsplit)
+                       for hsplit in hsplits)
+            vsplits = itertools.imap(numpy.hstack, hsplits)
+            new_image = numpy.vstack(vsplits)
+            return new_image
 
 
 if __name__ == '__main__':
@@ -127,6 +158,7 @@ if __name__ == '__main__':
         parser.add_option('-x', '--x_scale', default='1', help='Multiply size of patches with this')
         parser.add_option('-a', '--alternatives', default='1', help='Find more alternatives to patches')
         parser.add_option('-c', '--colorspace', default='rgb', help='Colorspace, rgb or hsv')
+        parser.add_option('--debug', action='store_true', default=False, help='Debug, produce scatter plot')
         return parser
 
 
@@ -142,7 +174,8 @@ if __name__ == '__main__':
         scale = int(options.x_scale)
         alt = int(options.alternatives)
         p = Patches(images, shape, scale_factor=scale, alternatives=alt,
-                    colorspace=options.colorspace)
+                    colorspace=options.colorspace, debug=options.debug)
         a = scipy.misc.imread(target)
         b = p.represent(a)
-        scipy.misc.imsave(output, b)
+        if not options.debug:
+            scipy.misc.imsave(output, b)
