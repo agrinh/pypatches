@@ -32,10 +32,9 @@ class Patchworks(object):
         self.__images = [crop(image, real_shape) for image in images]
         # prepare images
         preprocessed = itertools.imap(self.preprocess, self.__images)
-        data, mean, std, selected = self.__initialize_data(preprocessed, patch_shape)
+        data, mean, std = self.__initialize_data(preprocessed, patch_shape)
         self.__mean = mean
         self.__std = std
-        self.__selected = selected
         # prepare for comparisons
         max_components = int(0.5 * len(images))
         self.__pca = sklearn.decomposition.PCA(n_components=max_components)
@@ -49,15 +48,13 @@ class Patchworks(object):
         # pull out into row vectors and stack
         rows = (image.flatten() for image in images)
         M = numpy.vstack(rows)
-        # select columns with any variance
-        std = M.std(0)
-        selected = numpy.argwhere(std!=0)
-        M = M[:, selected].squeeze()
         # get characteristics
         std = M.std(0)
+        selected = numpy.argwhere(std==0)
+        std[selected] = 1  # make sure there are no 0's
         mean = M.mean(0)
         M = (M - mean) / std  # normalize
-        return M, mean, std, selected
+        return M, mean, std
 
     # # # Helpers
 
@@ -72,7 +69,7 @@ class Patchworks(object):
         Produce row vector ready for comparisions.
         """
         patch = self.preprocess(patch)
-        data = self.select(patch)
+        data = patch.flatten()
         normalized = self.normalize(data)
         return self.project(normalized)
 
@@ -91,12 +88,6 @@ class Patchworks(object):
         Project the data onto the principal components.
         """
         return self.__pca.transform(data)
-
-    def select(self, patch):
-        """
-        Produce a row vector from the patch.
-        """
-        return patch.flatten()[self.__selected].squeeze()
 
     # # # Main interface
 
