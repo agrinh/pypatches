@@ -11,6 +11,8 @@ def crop(image, new_shape):
     removed and the cropped image contains the middle of the original one.
     """
     shape = image.shape
+    if shape == new_shape:
+        return image
     # get ratios
     ratio = float(shape[0]) / shape[1]
     new_ratio = float(new_shape[0]) / new_shape[1]
@@ -45,3 +47,21 @@ def plot_3d_scatter(axis, data, color='b'):
     ys = data[:, 1]
     zs = data[:, 2]
     axis.scatter(xs, ys, zs, c=color)
+
+
+def visual_compare(data1, data2):
+    """
+    Plots a visual comparision of data1 and data2.
+
+    Produces a 3D scatterplot showing data1 (blue) and the data2 (red).
+
+    Imports matplotlib.pyplot and mpl_toolkits.mplot3d when called.
+    """
+    import matplotlib.pyplot
+    import mpl_toolkits.mplot3d
+    # plot
+    figure = matplotlib.pyplot.figure()
+    axis = figure.add_subplot(111, projection='3d')
+    plot_3d_scatter(axis, data1, color='b')
+    plot_3d_scatter(axis, data2, color='r')
+    matplotlib.pyplot.show()

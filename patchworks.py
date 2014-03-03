@@ -1,15 +1,13 @@
 #!/usr/bin/python
 
 import itertools
-import matplotlib
-import matplotlib.pyplot
-import mpl_toolkits.mplot3d
 import sklearn.decomposition
 import scipy.spatial
 import numpy
 
+from matcher import PCAMatcher, MeanColorMatcher
 from patches import Patches
-from utilities import crop, plot_3d_scatter
+from utilities import crop, visual_compare
 
 
 class Patchworks(object):
@@ -24,7 +22,6 @@ class Patchworks(object):
         if colorspace not in ('rgb', 'hsv'):
             raise ValueError('Only supported colorspaces are rgb and hsv')
         # store parameters
-        self.__alternatives = alternatives
         self.__colorspace = colorspace
         self.__patch_shape = patch_shape
         real_shape = (patch_shape[0] * scale_factor,
@@ -32,46 +29,10 @@ class Patchworks(object):
         self.__images = [crop(image, real_shape) for image in images]
         # prepare images
         preprocessed = itertools.imap(self.preprocess, self.__images)
-        data, mean, std = self.__initialize_data(preprocessed, patch_shape)
-        self.__mean = mean
-        self.__std = std
-        # prepare for comparisons
-        max_components = int(0.5 * len(images))
-        self.__pca = sklearn.decomposition.PCA(n_components=max_components)
-        self.__pca.fit(data)
-        self.__kd_tree = scipy.spatial.cKDTree(self.project(data))
-        # save projected data for debugging
-        self.__data = self.__pca.transform(data)
-
-    @classmethod
-    def __initialize_data(cls, images, patch_shape):
-        # pull out into row vectors and stack
-        rows = (image.flatten() for image in images)
-        M = numpy.vstack(rows)
-        # get characteristics
-        std = M.std(0)
-        selected = numpy.argwhere(std==0)
-        std[selected] = 1  # make sure there are no 0's
-        mean = M.mean(0)
-        M = (M - mean) / std  # normalize
-        return M, mean, std
+        data = numpy.vstack(preprocessed)
+        self.match = MeanColorMatcher(data, alternatives)
 
     # # # Helpers
-
-    def normalize(self, data):
-        """
-        Normalize data.
-        """
-        return (data - self.__mean) / self.__std
-
-    def prepare(self, patch):
-        """
-        Produce row vector ready for comparisions.
-        """
-        patch = self.preprocess(patch)
-        data = patch.flatten()
-        normalized = self.normalize(data)
-        return self.project(normalized)
 
     def preprocess(self, patch):
         """
@@ -81,34 +42,16 @@ class Patchworks(object):
             cropped = crop(patch, self.__patch_shape)
         if self.__colorspace == 'hsv':
             cropped = matplotlib.colors.rgb_to_hsv(cropped)
-        return cropped
-
-    def project(self, data):
-        """
-        Project the data onto the principal components.
-        """
-        return self.__pca.transform(data)
+        return cropped.flatten().astype(numpy.float)
 
     # # # Main interface
-
-    @property
-    def component_images(self):
-        """
-        Returns images of the principal components of the library of images.
-        """
-        pca_images = (component.reshape(self.__patch_shape)
-                      for component in self.__pca.components_)
-        return pca_images
 
     def replace(self, patch):
         """
         Replace patch with one from library of images.
         """
-        point = self.prepare(patch)
-        alternatives = self.__alternatives
-        dist, indexes = self.__kd_tree.query(point, k=alternatives)
-        index = numpy.random.choice(indexes.flatten())
-        return self.__images[index]
+        point = self.preprocess(patch)
+        return self.__images[self.match(point)]
 
     def represent(self, image):
         """
@@ -119,19 +62,17 @@ class Patchworks(object):
         return patches.stack(replacement_patches)
 
     def visualize(self, image):
-        """
-        Plots a visualization of the patchwork.
-
-        The produced scatterplot shows a visualization of the library data
-        (blue) and the patch data (red) in the projected space.
-        """
-        # data for patches
         patches = Patches(image, self.__patch_shape)
-        patch_data = numpy.vstack(itertools.imap(self.prepare, patches))
+        extract = lambda patch: self.match.transform(self.preprocess(patch))
+        patch_data = numpy.vstack(itertools.imap(extract, patches))
         patch_data = patch_data[:, :3]  # select the three principal components
-        # plot
-        figure = matplotlib.pyplot.figure()
-        axis = figure.add_subplot(111, projection='3d')
-        plot_3d_scatter(axis, self.__data, color='b')
-        plot_3d_scatter(axis, patch_data, color='r')
-        matplotlib.pyplot.show()
+        visual_compare(self.match.data, patch_data)
+
+    @property
+    def component_images(self):
+        """
+        Returns images of the principal components of the library of images.
+        """
+        pca_images = (component.reshape(self.__patch_shape)
+                      for component in self.match.components)
+        return pca_images
